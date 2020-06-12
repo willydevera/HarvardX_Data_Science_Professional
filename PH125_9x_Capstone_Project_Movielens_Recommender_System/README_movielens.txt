@@ -1,0 +1,1 @@
+A new repository to add the required PH125_9x Capstone Movielens Project reports in RMD and PDF formats, as well as the main script/code in R format that generates the predicted movie ratings, RMSE scores, and corresponding grades from the 18 models that were built.
