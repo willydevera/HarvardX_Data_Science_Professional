@@ -7,4 +7,4 @@ save(earth_edx, file="{your_folder_path}\\earth_edx.rda")
 
 And then run the alternative_load_earth_edx code chunk in Section 2.2.5 - Variable importance from the RMD file. Note the path where you saved it. The earth_edx file is about 205 MB and this cannot be uploaded to github.
 
-As well, running the stats linear model and h2o random forests, generalized linear model (glm), deep neural network, and gradient boosting machine (gbm) models may may take a longer while and require larger memory.  In fact, the time to knit this rmd file would require about 7-8 hours on R 3.5.x Windows 10, 64-bit running on Intel Core i7-7700 with 32 GB RAM.
+As well, running the stats linear model and h2o random forests, generalized linear model (glm), deep neural network, and gradient boosting machine (gbm) models may take a longer while and require larger memory.  In fact, the time to knit this rmd file would require about 7-8 hours on R 3.5.x Windows 10, 64-bit running on Intel Core i7-7700 with 32 GB RAM.
