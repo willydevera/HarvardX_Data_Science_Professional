@@ -1,0 +1,12 @@
+Predict liver disease based of the following variables:
+
+Age of the patient
+Gender of the patient
+Total Bilirubin
+Direct Bilirubin
+Alkaline Phosphotase
+Alamine Aminotransferase
+Aspartate Aminotransferase
+Total Protiens
+Albumin
+Albumin and Globulin Ratio
