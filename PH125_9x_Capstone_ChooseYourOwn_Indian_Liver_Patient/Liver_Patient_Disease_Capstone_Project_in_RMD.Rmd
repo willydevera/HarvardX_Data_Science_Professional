@@ -1,0 +1,1546 @@
+---
+title: 'HarvardX: PH125.9x Data Science: Capstone Project'
+subtitle: 'Choose Your Own: Predicting Indian Liver Disease'
+author: "Wilfredo A. de Vera"
+date: "June 21, 2020"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+  number_sections: true
+  toc: true
+  keep_tex: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	cache = FALSE
+)
+options(tinytex.verbose = TRUE)
+```
+
+```{r load libraries, message=FALSE, warning=FALSE, include=FALSE}
+# load libraries
+library(tinytex)
+library(tidyverse)
+library(xda)
+library(caret)
+library(mice)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(h2o)
+library(earth)
+```
+
+
+##############
+
+```{r liver_disease_data_load, message=FALSE, warning=FALSE, include=FALSE}
+# data load
+# read the "indian_liver_patient.csv" dataset from my github subfolder
+# and automatically save it into your working directory using this code:
+
+url <- "https://github.com/willydevera/HarvardX_Data_Science_Professional/raw/master/PH125_9x_Capstone_ChooseYourOwn_Indian_Liver_Patient/indian_liver_patient.csv"
+
+path <- paste(getwd(), "indian_liver_patient.csv", sep="/")
+
+if (!file.exists(path)) {
+  download.file(url, path)
+}
+
+liver <- read.csv(path)
+
+# Or you could download directly from source: https://www.kaggle.com/uciml/indian-liver-patient-records
+# and manually save into your working directory and then read the data using this code:
+# path <- paste(getwd(), "indian_liver_patient.csv", sep="/")
+# liver <- read.csv(path)
+
+# remove unnecessary temorary files
+rm(url, path)
+
+```
+
+## 1. Executive Summary  
+  
+This is the second part of the HarvardX PH125.9X Capstone Project - Choose Your Own.  While the first capstone project was to build a recommender system using the movielens dataset, this second capstone will focus on the Indian Liver Patient Records.  The dataset for this project is included in Kaggle's curated list of datasets and is already cleaned and ready for machine learning analysis. As well, it is available for download from https://www.kaggle.com/uciml/indian-liver-patient-records.
+
+The objective of this study is to predict liver disease based of the following 10 independent variables:
+a.) Age of the patient; 
+b.) Gender of the patient; 
+c.) Total Bilirubin; 
+d.) Direct Bilirubin; 
+e.) Alkaline Phosphotase; 
+f.) Alamine Aminotransferase; 
+g.) Aspartate Aminotransferase; 
+h.) Total Protiens; 
+i.) Albumin; and  
+j.) Albumin and Globulin Ratio.
+
+The original dataset contains a total of 583 observations - 416 of which have no liver disease while the remaining 167 have liver disease.  And of the 167 liver disease cases, 50 were females and 117 were males.
+
+```{r inital_analysis_01, echo=FALSE, message=FALSE, warning=FALSE}
+# initial analysis
+# total number of disease and distribution of disease by gender
+table(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y")))
+
+table(liver$Gender, disease = as.factor(ifelse(liver$Dataset==1, "N", "Y")))
+
+```
+
+After exploratory data analysis, wrangling and cleaning, the liver dataset shrunk to 579 observations due to 4 missing (NA) values detected in the Albumin_and_Globulin_Ratio variable. The missing values from the four observations in this variable were predicted in the main R code using the mice package that employs multivariate imputation by chained equations (MICE) algorithm; but then the decision has been made to simply remove them since they only comprise `r signif(4/nrow(liver)*100, 2)`% of the original dataset. The resulting clean liver dataset, which comprises 579 observations, was then split 70%-30% corresponding to train_set and test_set, with 404 and 175 observations, respectively.
+
+The train_set dataset was fit and trained on the twelve (12) algorithms that were built, which include: logistic regression, neural network/deep learning, random forests, gradient boosting machine (GBM), support vector machine (SVM), and naive bayes from the h2o library. In addition to these h2o models, classification tree, C5.0 classification tree, evolutionary classification tree, logistic model-based recursive partitioning, and principal components analysis were likewise developed to determine and select the best algorithm.
+
+Subsequently, the performance of the 12 algorithms were assessed and reported using the test_set dataset in terms of accuracy, sensitivity, specificity, and precision. Since the presence of liver disease is being predicted based of the 10 independent variables, it is necessary to particularly measure specificity, or the true negative rate, which is the proportion of True Negative/(True Negative + False Positive) found in the second column of the confusion matrix. Hence, in this context, the true negatives (TN) pertain to the presence of liver disease, while true positives (TP) pertain to its absence.
+
+Finally, the naive bayes model was determined to be the best algorithm that yielded the highest specificity of 0.88 and raw prediction accuracy of 0.59.
+
+
+
+## 2. Exploratory Data Analysis (EDA) and Wrangling  
+  
+Initial analysis on the original dataset was conducted in terms of generating summary statistics and visualization. The dataset was then wrangled and cleaned after detecting the presence of NA values. Then further data analysis was performed on the clean dataset in terms of checking correlation, principal components, variable importance, multi-collinearity (variance inflation factor), normality, linearity, and outliers (chi-squared test).  Observations and insights gained are noted in each step during the analysis.
+
+
+## 2.1 Generate summary statistics
+
+```{r summary_statistics, echo=FALSE, message=FALSE, warning=FALSE}
+# generate summary statistics with xda
+
+# install xda
+# reference: https://github.com/ujjwalkarn/xda
+# library(devtools)
+# install_github("ujjwalkarn/xda")
+library(xda)
+numSummary(liver)
+charSummary(liver)
+
+```
+  
+According to the Kaggle documentation, the records were collected from North East of Andhra Pradesh, India, and that the "Dataset" column is a class label used to divide groups into liver patient (liver disease) or not (no disease). This is the dependent variable but was encoded as integer class. 
+
+Moreover, the above summary statistics reveal 4 missing values in Albumin_and_Globulin_Ratio variable which comprise only 0.686% of the dataset. The 4 specific observations with truncated variables are presented briefly below:  
+
+
+```{r display_missing, echo=FALSE, message=FALSE, warning=FALSE}
+# show count and % of NAs in Albumin_and_Globulin_Ratio variable
+
+numSummary(liver)[9, 16:17]
+  
+# display specific records and selected vars where Albumin_and_Globulin_Ratio==NA
+liver[, c(1:2, 10:11)] %>% mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y")),
+                 Gender = as.numeric(Gender)) %>%
+  select(-c(Dataset)) %>%
+  filter(is.na(Albumin_and_Globulin_Ratio)==TRUE)
+```
+  
+  
+  
+
+## 2.2 Visualization  
+  
+Since there are 10 independent variables to visualize, we may be looking at `r ncol(combn(10,2))` possible combinations of variable-pairs to plot.  However in this section, we will only present `r ncol(combn(4,2))` scatterplots of the variables Direct_Bilirubin, Alamine_Aminotransferase, Age, and Alkaline_Phosphotase, which were deemed to be important later on as indicated in Section 2.6 - Variable importance. 
+
+
+  
+## 2.2.1 Plot of Direct_Bilirubin vs. Alamine_Aminotransferase  
+  
+```{r viz_01, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+
+# plot of Direct_Bilirubin vs. Alamine_Aminotransferase
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Direct_Bilirubin,
+                 y = Alamine_Aminotransferase,
+                 colour=disease)) +
+  # coord_trans(x = "log10") + # because Direct_Bilirubin ranges from 0.1 to 19.7
+  coord_trans(y = "log10") +   # because Alamine_Aminotransferase ranges from 10 to 2000
+  xlab('Direct_Bilirubin') +
+  ylab('Alamine_Aminotransferase') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Direct_Bilirubin vs. Alamine_Aminotransferase")
+```
+  
+It may be observed that there is no liver disease when Direct_Bilirubin is above 3 and Alamine_Aminotransferase is above 250.  
+  
+  
+## 2.2.2 Plot of Direct_Bilirubin vs. Age
+  
+```{r viz_02, echo=FALSE, message=FALSE, warning=FALSE}
+# plot of Direct_Bilirubin vs. Age
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Direct_Bilirubin,
+                 y = Age,
+                 colour=disease)) +
+  # coord_trans(x = "log10") +   # because Direct_Bilirubin ranges from 0.1 to 19.7
+  coord_trans(y = "log10") +     # because Age ranges from 4 to 90
+  xlab('Direct_Bilirubin') +
+  ylab('Age') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Direct_Bilirubin vs. Age")
+
+```
+  
+It may be observed that liver disease may occur regardless of Age.  But then it still shows that there is no liver disease when Direct_Bilirubin is above 3.  
+  
+  
+## 2.2.3 Plot of Direct_Bilirubin vs. Alkaline_Phosphotase  
+  
+```{r viz_03, echo=FALSE, message=FALSE, warning=FALSE}
+# plot of Direct_Bilirubin vs. Alkaline_Phosphotase
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Direct_Bilirubin,
+                 y = Alkaline_Phosphotase,
+                 colour=disease)) +
+  # coord_trans(x = "log10") + # because Direct_Bilirubin ranges from 0.1 to 19.7
+  coord_trans(y = "log10") +   # because Alkaline_Phosphotase ranges from 63  to 2110
+  xlab('Direct_Bilirubin') +
+  ylab('Alkaline_Phosphotase') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Direct_Bilirubin vs. Alkaline_Phosphotase")
+
+```
+  
+It may be observed that liver disease may be rare when Alkaline_Phosphotase is above 700 and that it is absent when Direct_Bilirubin is above 3.  
+  
+  
+  
+## 2.2.4 Plot of Alamine_Aminotransferase vs. Age  
+  
+```{r viz_04, echo=FALSE, message=FALSE, warning=FALSE}
+# plot of Alamine_Aminotransferase vs. Age
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Alamine_Aminotransferase,
+                 y = Age,
+                 colour=disease)) +
+  coord_trans(x = "log10") +     # because Alamine_Aminotransferase ranges from 10 to 2000 
+  # coord_trans(y = "log10") +   # because Age ranges from 4 to 90
+  xlab('Alamine_Aminotransferase') +
+  ylab('Age') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Age vs. Alamine_Aminotransferase")
+
+```
+  
+It appears that liver disease occurs regardless of Age but is absent when Alamine_Aminotransferase is above 250.  
+  
+  
+## 2.2.5 Plot of Alamine_Aminotransferase vs. Alkaline_Phosphotase  
+  
+```{r viz_05, echo=FALSE, message=FALSE, warning=FALSE}
+# plot of Alamine_Aminotransferase vs. Alkaline_Phosphotase 
+
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Alamine_Aminotransferase,
+                 y = Alkaline_Phosphotase,
+                 colour=disease)) +
+  coord_trans(x = "log10") +     # because Alamine_Aminotransferase ranges from 10 to 2000 
+  # coord_trans(y = "log10") +   # because Alkaline_Phosphotase ranges from 63 to 2110
+  xlab('Alamine_Aminotransferase') +
+  ylab('Alkaline_Phosphotase') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Alamine_Aminotransferase vs. Alkaline_Phosphotase")
+
+```
+  
+It may be observed that liver disease is rare when Alkaline_Phosphotase is above 700 and absent when Alamine_Aminotransferase is above 250.  
+  
+  
+## 2.2.6 Plot of Age vs. Alkaline_Phosphotase  
+  
+```{r viz_06, echo=FALSE, message=FALSE, warning=FALSE}
+# plot of Age vs. Alkaline_Phosphotase
+
+liver %>%
+  mutate(disease = as.factor(ifelse(liver$Dataset==1, "N", "Y"))) %>%
+  ggplot() + 
+  geom_point(aes(x = Age,
+                 y = Alkaline_Phosphotase,
+                 colour=disease)) +
+  coord_trans(x = "log10") +   # because Age ranges from 4 to 90 
+  coord_trans(y = "log10") +   # because Alkaline_Phosphotase ranges from 63 to 2110
+  xlab('Age') +
+  ylab('Alkaline_Phosphotase') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Scatterplot of Age vs. Alkaline_Phosphotase")
+
+```
+  
+It is evident that liver disease may be present regardless of Age but is rare when Alkaline_Phosphotase is above 700.  
+  
+  
+    
+## 2.3 Data cleaning and wrangling  
+  
+
+In this section, the original liver dataset will be cleaned of missing values (NAs). As previously noted in Section 2.1, there were only 4 observations whose Albumin_and_Globulin_Ratio is NA, and that the proportion with respect to the dependent variable are the same - i.e. 2 records for the presence and 2 records for the absence of liver disease as shown in Section 2.1. Since the amount of missing data is small at 0.686%, we could just easily remove them. The resulting clean liver dataset would yield 579 observations with 11 variables.
+
+```{r clean_liver_set, echo=FALSE, message=FALSE, warning=FALSE}
+# data cleaning
+# if we opt to remove the 4 records with Albumin_and_Globulin_Ratio = NA, the code should be:
+liver_clean <- liver %>% filter(!is.na(Albumin_and_Globulin_Ratio==TRUE))
+
+str(liver_clean)
+
+```
+
+After cleaning the dataset of NAs, the dependent variable "Dataset" will be renamed as integer variable "y". As well, from the same "Dataset" variable, we will introduce a factor variable "disease" with values "N" and Y", which corresponds to no-liver and with-liver disease, respectively. The rationale for this is that, while most binary classification algorithms require them to be factor, there are certain algorithms like principal components analysis (PCA) in Section 3.11 that require them to be numeric. Hence, there is no harm in maintaining both class types and that it could be easily referenced during the modeling process. Hence, from the cleaned and wrangled liver dataset, the distribution of liver disease by gender will be:
+
+```{r wrangle_disease, echo=FALSE, message=FALSE, warning=FALSE}
+# liver_clean dataset
+liver_clean <- liver_clean %>% mutate(y = Dataset,
+                                      disease = as.factor(ifelse(Dataset==1, "N", "Y"))) %>%
+  select(-c(Dataset))
+
+print(paste0("liver_clean dataset: ", dim(liver_clean)[1], " obs  ", dim(liver_clean)[2], " vars"))
+
+# distribution of liver disease by gender on the liver_clean dataset
+table(liver_clean$Gender, liver_clean$disease)
+
+```
+  
+  
+From here on, we will check for correlation, principal components, variable importance, multi-collinearity, normality, linearity, and outliers using the cleaned liver dataset.  
+  
+  
+  
+## 2.4 Correlation
+
+```{r correlation, echo=FALSE}
+# Correlation
+liver_clean %>%
+  mutate(Gender = as.numeric(Gender)) %>%
+  select(-c(disease, y, Gender)) %>%
+  scale() %>%
+  as.matrix() %>%
+  cor()
+```
+  
+  
+The following points could be observed from the correlation table:  
+  
+  1.) Direct_Bilirubin is correlated with Total_Bilirubin at 0.87448  
+  2.) Alamine_Aminotransferase is correlated with Aspartate_Aminotransferase at 0.7919  
+  3.) Albumin is correlated with Albumin_and_Globulin_Ratio at 0.68963  
+  4.) Total_Protiens is correlated with Albumin at 0.7831
+  
+The remaining chemicals in the correlation table yielded either a slightly positive or negative correlation.  
+  
+  
+
+
+## 2.5 Principal components  
+  
+```{r principal, echo=FALSE, message=FALSE, warning=FALSE}
+# principal components analysis
+liver_clean %>%
+  mutate(Gender = as.numeric(Gender)) %>%
+  select(-c(disease, y)) %>%
+  prcomp(~ ., data=., scale=TRUE) %>%
+  summary()
+```
+  
+The first 5 principal components account for 81.51% of the variability in the dataset.  
+  
+  
+    
+## 2.6 Variable importance  
+  
+We will use the earth package to determine the important variables.
+
+```{r varimp, echo=FALSE, message=FALSE, warning=FALSE}
+# Variable importance
+library(earth)
+
+liver_clean %>% mutate(Gender = as.numeric(Gender)) %>%
+  select(-c(12)) %>%
+  mutate_at(-c(2,11), funs(scale(.))) %>%
+  earth(y ~ ., data=.) %>%
+  evimp(trim=FALSE)
+```
+  
+The above results show that only the variables Direct_Bilirubin, Alamine_Aminotransferase, Age, and Alkaline_Phosphotase are important.  
+  
+  
+## 2.7 Multi-collinearity (Variance Inflation Factor)  
+
+We will use the car package to check for multi-collinearity and determine redundant variables.
+
+```{r VIF_check, echo=FALSE}
+# multicollinearity check
+
+library(car)
+
+# create train-test
+library(caret)
+set.seed(1)
+test_index <- createDataPartition(y = liver_clean$disease, times = 1,
+                                  p = 0.30, list = FALSE)
+# on the liver_clean set
+test_set <- liver_clean[test_index, ]
+train_set <- liver_clean[-test_index, ]
+
+# check for mult-collinearity
+
+set.seed(1)
+
+# build the model
+# dropping response variables for calculating multi-collinearity
+# model <- lm(y ~ ., data=train_set[1:11])
+train_set[1:10] <- train_set[1:10] %>% mutate(Gender = as.numeric(Gender)) %>% scale()
+
+model <- lm(y ~ ., data=train_set[1:11])
+
+# Make predictions
+test_set[1:10] <- test_set[1:10] %>% mutate(Gender = as.numeric(Gender)) %>% scale()
+
+predictions <- predict(model, test_set[1:10])
+
+
+# Model performance
+# data.frame(RMSE = RMSE(predictions, test_set$y),
+#            R2 = R2(predictions, test_set$y))
+
+#          RMSE          R2
+#  0.4285702646 0.1008179244
+
+# R2 - coeff of determination - statistical measure of how close the data are to the fitted regression line
+
+
+# Variance Inflation Factor
+car::vif(model)
+```
+
+Typically in practice there is a small amount of collinearity among the predictors. As a rule of thumb, a variance inflation factor (VIF) value that exceeds 5 or 10 indicates a problematic amount of collinearity. (Introduction to Statistical Learning 7ed p.101) 
+
+Hence, Albumin and Total_Protiens appear to be multi-collinear or redundant as they have VIF values of 11.71 and 6.16, respectively.  
+
+
+
+## 2.8 Check for normality
+
+This is to investigate whether the observed sample is from a normal distribution. It is used for assessing whether the sample data are randomly obtained from a normally distributed population. It does not require that the mean or variance of the hypothesized normal distribution be specified in advance.
+
+We will run shapiro test to generate & report p-values.
+
+  a.) Null hypothesis H0: Is the sample from a normal distribution?  
+  b.) if p-value >= 0.05 we do not reject the null hypothesis that the data are from normal distribution  
+  c.) if p-value < 0.05 we reject the null hypothesis that the data are from normal distribution  
+  
+```{r normality_check, echo=FALSE, message=FALSE, warning=FALSE}
+# check for normality
+# exclude Gender factor {col 2} and dependent vars y {col 11} and disease {col 12}
+df <- liver_clean[, c(1,3:10)]
+
+# generate a shapiro list
+lshap <- lapply(df, shapiro.test)
+
+# select only the p-values and transpose
+shap_p_val <- sapply(lshap, `[`, c("p.value")) %>% data.frame() %>% data.frame(row.names="p_values") %>% t
+
+shap_p_val
+```
+  
+Since the p-values for all the 9 numeric variables are less than 0.05, we reject the null hypothesis that the data are from normal distribution.  
+
+
+
+## 2.9 Check for linearity
+
+This is to investigate whether the observed sample is linear, and that the null hypothesis is that the regression model is linear. This test attempts to detect non-linearities when the data is ordered with respect to a specific variable.
+
+We will run Harvey-Collier test for linearity to generate & report p-values.
+
+  a.) Null hypothesis H0: Is the regression model correctly specified as linear?  
+  b.) if p-value >= 0.05 we do not reject the null hypothesis of linearity  
+  c.) if p-value < 0.05 we reject the null hypothesis of linearity  
+  
+```{r linearity_check, echo=FALSE}
+# harvey-Collier test for linearity
+# exclude Gender factor {col 2} 
+# dependent var y as numeric, all other variables should be numeric
+options(digits=10)
+
+library(lmtest)
+
+f <- y ~ Age + Total_Bilirubin + Direct_Bilirubin + Alkaline_Phosphotase + Alamine_Aminotransferase +
+  Aspartate_Aminotransferase + Total_Protiens + Albumin + Albumin_and_Globulin_Ratio
+
+harvtest(formula = f, data = liver_clean)
+
+```
+
+
+Since p-value = 0.5785027, which is >= 0.05, we do not reject the null hypothesis of linearity.  And since we are not rejecting the null hypothesis of linearity, this likewise means that we could use generalized linear models like logistic regression.  
+
+
+
+## 2.10 Check for outliers (chi-squared test)  
+
+This is investigate whether the sample data contain outliers. The function chisq.out.test can be used to perform this test and takes the form chisq.out.test(data, variance=1). The parameter variance refers to the known population variance.  
+
+```{r check_outliers, echo=FALSE, message=FALSE, warning=FALSE}
+# check for outliers: chi-squared test
+
+# derive the residual of the regression model
+f <- y ~ Age + Total_Bilirubin + Direct_Bilirubin + Alkaline_Phosphotase + Alamine_Aminotransferase +
+  Aspartate_Aminotransferase + Total_Protiens + Albumin + Albumin_and_Globulin_Ratio
+
+# train model
+reg_model <- lm(formula = f, data = liver_clean)
+
+# residuals
+reg_residual <- rstudent(reg_model)
+
+library(outliers)
+
+outlier <- chisq.out.test(reg_residual, variance = 1)
+
+outlier
+
+outlier_alternative <- outlier$alternative
+
+outlier_pvalue <- outlier$p.value[[1]]
+
+print(paste0("The ", outlier_alternative, " with a p-value of ", outlier_pvalue))
+
+```
+  
+  
+  
+Comparative boxplot of chemical substances with low values, namely: Total_Bilirubin, Direct_Bilirubin, Total_Protiens, Albumin, and Albumin_and_Globulin_Ratio  
+
+
+```{r boxplot_low_chem, echo=FALSE, message=FALSE, warning=FALSE}
+# boxplot 1 - plot chemical substances with low values
+# Total_Bilirubin
+# Direct_Bilirubin
+# Total_Protiens
+# Albumin
+# Albumin_and_Globulin_Ratio
+
+liver_clean[c(3, 4, 8, 9, 10)] %>% boxplot(main="Compare chemical substances with low values",
+                                           horizontal=FALSE,
+                                           #notch=TRUE,
+                                           boxwex = 0.25)
+```
+  
+    
+  
+Comparative boxplot of chemical substances with high values, namely: Alkaline_Phosphotase, Alamine_Aminotransferase, and Aspartate_Aminotransferase  
+
+```{r boxplot_high_chem, echo=FALSE, message=FALSE, warning=FALSE}
+## boxplot 2 - plot chemical substances with high values
+# Alkaline_Phosphotase
+# Alamine_Aminotransferase
+# Aspartate_Aminotransferase
+
+liver_clean[c(5, 6, 7)] %>% boxplot(main="Compare chemical substances with high values",
+                                    horizontal=FALSE,
+                                    #notch=TRUE,
+                                    boxwex = 0.25)
+
+```
+
+
+
+
+
+  
+  
+## 3. Methods  
+  
+The modeling approach for this project is implemented by performing the following 4 general steps:  
+  
+  1.) Splitting the clean liver dataset 70%-30% into train_set and test_set  
+  2.) Choosing and fitting the model on the train_set  
+  3.) Making predictions on the test_set and measuring performance  
+  4.) Selecting the model with the highest specificity
+  
+  
+  
+  
+    
+```{r train_test_split, echo=FALSE}
+# train-test split 70%-30%
+library(caret)
+set.seed(1)
+# set.seed(1, sample.kind="Rounding")
+
+test_index <- createDataPartition(y = liver_clean$disease, times = 1,
+                                  p = 0.30, list = FALSE)
+
+# on the liver_clean set
+test_set <- liver_clean[test_index, ]
+train_set <- liver_clean[-test_index, ]
+
+```
+  
+  
+  
+**Splitting into train and test datasets**  
+
+
+The distribution of liver disease for both the train_set and test_set are as follows:
+
+For the train_set dataset:
+```{r train_disease_proportions, echo=FALSE}
+# distribution of disease on train_set regardless of Gender
+table(disease=train_set$disease)
+
+# distribution of disease on train_set by Gender
+table(gender=train_set$Gender, disease=train_set$disease)
+
+```
+  
+  
+For the test_set dataset:
+```{r test_disease_proportions, echo=FALSE}
+# distribution of disease on test_set regardless of Gender
+table(disease=test_set$disease)
+
+# distribution of disease on test_set by Gender
+table(gender=test_set$Gender, disease=test_set$disease)
+
+# remove unnecessary temporary dataframe test_index
+rm(test_index)
+
+```
+  
+  
+
+**Fitting/training the model** 
+
+After creating the train_set and test_set datasets, the following models will be built and trained using the train_set:  
+  
+  a.) logistic regression  
+  b.) neural network/deep learning  
+  c.) random forests  
+  d.) gradient boosting machine (GBM)  
+  e.) support vector machine (SVM)  
+  f.) naive bayes  
+  g.) classification tree  
+  h.) C5.0 classification tree  
+  i.) evolutionary classification tree  
+  j.) logistic model-based recursive partitioning  
+  k.) principal components analysis (PCA)  
+  l.) principal components analysis - singular value decomposition (PCA-SVD) method  
+  
+  
+The first six models from logistic regression to naive bayes indicated above will make use of the h2o package. The h2o library is a scalable open-source machine learning library and as likewise previously mentioned in my Capstone Movielens Project Report, there are benefits of using the h2o package.  According to this article from R-bloggers (https://www.r-bloggers.com/5-reasons-to-learn-h2o-for-high-performance-machine-learning/), there are 5 reasons for using h2o:  
+  
+  a.) h2o AutoML automates the machine learning workflow, which includes automatic training and tuning of many models.  
+  b.) Scalable on Local Compute: distributed, in-memory processing speeds up computations  
+  c.) Spark integration & GPU support: the result is 100x faster training than traditional ML  
+  d.) Superior performance: best algorithms, optimized and ensembled: The most popular algorithms are incorporated including GLM, random forest, GBM and more.  
+  e.) Production ready, e.g. docker containers  
+
+  
+  
+
+  
+
+**Making predictions on the test_set and measuring performance**  
+
+Note that there are 50 out of 175 cases of liver disease in the test_set. This number will be monitored in the confusion matrix as the models are generated. In terms of measuring performance, accuracy, sensitivity, specificity, and precision will be calculated. And all throughout this section, the confusion matrix will be indicated, along with these model performance measures. Importantly, particular emphasis will be on specificity or the true negative rate, because we are interested in the number of true negatives (TN), i.e. the presence of liver disease, being predicted accurately by the models.  
+
+The formulas in measuring performance of the models used in this project is found in Section 27.4.4 of the book: https://rafalab.github.io/dsbook/introduction-to-machine-learning.html, namely:  
+  
+  a.) Accuracy = (TruePositives + TrueNegatives)/SampleSize  
+  
+  This is the  raw prediction accuracy of the model  
+  
+  b.) Sensitivity = TruePositives/(TruePositives + FalseNegatives)  
+  
+  Sensitivity (or Recall) is the True Positive Rate (TPR) or the proportion of identified positives among the liver disease-positive population (class = 1)  
+  
+  c.) Specificity = TrueNegatives/(TrueNegatives + FalsePositives)  
+  
+  Specificity, which measures the True Negative Rate (TNR), is the proportion of identified negatives among the liver disease-negative population (class = 0)  
+  
+  d.) Precision = TruePositivesP/(TruePositives + FalsePositives)  
+  
+  Precision is the proportion of true positives among all the individuals that have been predicted to have liver disease-positive by the model. This represents the accuracy of a predicted positive outcome.  
+  
+
+
+  
+```{r set_digits_libs_h2o, message=FALSE, warning=FALSE, include=FALSE}
+# set digits
+options(digits=10)
+
+# load libraries
+library(knitr)
+library(caret)
+library(h2o)
+
+# initialize h2o
+set.seed(1)
+h2o.init(nthreads = -1)
+
+```
+  
+  
+  
+  
+  
+## 3.1 Logistic regression (LR) model h2o  
+
+```{r LR, message=FALSE, warning=FALSE, include=FALSE}
+# logistic regression
+# Fitting LR classifier to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+lr.model.h2o <- h2o.glm(x=c(1:10),
+                        y=12,
+                        training_frame=as.h2o(train_set),
+                        family="binomial",
+                        nfolds = 10,
+                        model_id = "lr_h2o_model",
+                        lambda=0,
+                        compute_p_values = TRUE,
+                        seed=1)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.lr.h2o = as.data.frame(h2o.predict(lr.model.h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.lr.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# The raw prediction accuracy of the model is defined as (TruePositives + TrueNegatives)/SampleSize.
+accuracy_01 <- cm$overall["Accuracy"][[1]]
+
+
+# Sensitivity (or Recall), which is the True Positive Rate (TPR) or the proportion of identified positives among the liver disease-positive population (class = 1). Sensitivity = TP/(TP + FN).
+sensitivity_01 <- cm$byClass["Sensitivity"][[1]]
+
+
+# Specificity, which measures the True Negative Rate (TNR), that is the proportion of identified negatives among the liver disease-negative population (class = 0). Specificity = TN/(TN + FP).
+specificity_01 <- cm$byClass["Specificity"][[1]]
+ 
+
+# Precision, which is the proportion of true positives among all the individuals that have been predicted to have liver disease-positive by the model. This represents the accuracy of a predicted positive outcome. Precision = TP/(TP + FP).
+precision_01 <- cm$byClass["Precision"][[1]]
+
+# create a results dataframe that indicates all accuracy results on the test_set
+results <- data.frame(method = "h2o logistic regression",
+                      accuracy = accuracy_01,
+                      sensitivity = sensitivity_01,
+                      specificity = specificity_01,
+                      precision = precision_01)
+
+```
+
+```{r LR_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("Logistic regression confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+
+  
+## 3.2 Neural network (deep learning) model h2o  
+
+
+```{r NN, message=FALSE, warning=FALSE, include=FALSE}
+# Fitting neural network model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+# since there are 10 variables, 1st hidden = 10/2 + 1 = 6
+#                               2nd hidden = 1st hidden/2 = 3
+set.seed(1)
+
+neural_deeplearn_h2o <- h2o.deeplearning(x=c(1:10),
+                                         y=12,
+                                         training_frame=as.h2o(train_set),
+                                         seed=1,
+                                         nfolds = 10,
+                                         epochs=50,
+                                         hidden = c(6,3),
+                                         activation="Rectifier",
+                                         overwrite_with_best_model=TRUE,
+                                         use_all_factor_levels = TRUE,
+                                         variable_importances = TRUE,
+                                         export_weights_and_biases = TRUE,
+                                         verbose=TRUE)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.dl.h2o = as.data.frame(h2o.predict(neural_deeplearn_h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.dl.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_02 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_02 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_02 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_02 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "h2o neural network/deep learning (6,3) hidden layers",
+                               accuracy = accuracy_02,
+                               sensitivity = sensitivity_02,
+                               specificity = specificity_02,
+                               precision = precision_02)
+
+
+```
+
+```{r NN_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("Neural network confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+  
+
+  
+
+Sample representation of the neural network model, with (6, 3) hidden layers, without the actual values of the weights and biases, is shown below.  X1..X12 = dataset variables; H1..H6 and H1..H3 = the hidden layers; and Y1/Y2 represent the outputs.  B1..B3 are the biases, while the lines represent the synapses/weights. 
+
+```{r nn_plot, echo=FALSE, message=FALSE, warning=FALSE}
+# plot the neural network model
+library(NeuralNetTools)
+
+net <- neural_deeplearn_h2o
+
+wts <- c()
+for (l in 1:(length(net@allparameters$hidden)+1)){
+  wts_in <- h2o.weights(net, l)
+  biases <- as.vector(h2o.biases(net, l))
+  for (i in 1:nrow(wts_in)){
+    wts <- c(wts, biases[i], as.vector(wts_in[i,]))
+  }
+}
+# generate struct from column 'units' in model_summary
+struct <- net@model$model_summary$units
+
+# plot it
+plotnet(wts, struct = struct)
+```
+  
+  
+
+
+
+  
+## 3.3 Random forests (rf) model h2o  
+
+
+```{r RF, message=FALSE, warning=FALSE, include=FALSE}
+# Fitting RF model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+random_forest_h2o <- h2o.randomForest(x=c(1:10),
+                                      y=12,
+                                      training_frame=as.h2o(train_set),
+                                      seed=1,
+                                      nfolds = 10,
+                                      ntrees = 1000,
+                                      mtries = 5,
+                                      max_depth = 5)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.rf.h2o = as.data.frame(h2o.predict(random_forest_h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.rf.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_03 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_03 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_03 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_03 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "h2o random forests model",
+                               accuracy = accuracy_03,
+                               sensitivity = sensitivity_03,
+                               specificity = specificity_03,
+                               precision = precision_03)
+
+```
+
+```{r RF_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("Random forests confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+
+
+## 3.4 Gradient boosting machine (gbm) model h2o  
+
+
+```{r GBM, message=FALSE, warning=FALSE, include=FALSE}
+# Fitting gbm model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+gbm_h2o <- h2o.gbm(x=c(1:10),
+                   y=12,
+                   training_frame=as.h2o(train_set),
+                   seed=1,
+                   nfolds = 10,
+                   distribution="bernoulli",
+                   stopping_metric = "AUTO",
+                   categorical_encoding = "AUTO",
+                   verbose=TRUE)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.gbm.h2o = as.data.frame(h2o.predict(gbm_h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.gbm.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_04 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_04 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_04 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_04 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "h2o gradient boosting machine (gbm) model",
+                               accuracy = accuracy_04,
+                               sensitivity = sensitivity_04,
+                               specificity = specificity_04,
+                               precision = precision_04)
+
+```
+
+```{r GBM_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("Gradient boosting machine confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+
+  
+## 3.5 Support vector machine (SVM) model h2o  
+
+
+```{r SVM, message=FALSE, warning=FALSE, include=FALSE}
+# Fitting SVM model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+svm_h2o <- h2o.psvm(x=c(1:10),
+                    y=12,
+                    training_frame=as.h2o(train_set),
+                    gamma = 0.01, rank_ratio = 0.1,
+                    disable_training_metrics = FALSE)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.svm.h2o = as.data.frame(h2o.predict(svm_h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.svm.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_05 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_05 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_05 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_05 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "h2o support vector machine (svm) model",
+                               accuracy = accuracy_05,
+                               sensitivity = sensitivity_05,
+                               specificity = specificity_05,
+                               precision = precision_05)
+
+```
+
+```{r SVM_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("SVM confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+
+  
+## 3.6 Naive bayes (NB) model h2o  
+
+
+```{r NB, message=FALSE, warning=FALSE, include=FALSE}
+# Fitting NB model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+nb_h2o <- h2o.naiveBayes(x=c(1:10),
+                         y=12,
+                         training_frame=as.h2o(train_set),
+                         nfolds = 10,
+                         seed = 1,
+                         fold_assignment="Stratified",
+                         laplace = 1)
+
+# Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.nb.h2o = as.data.frame(h2o.predict(nb_h2o, type='raw', newdata=as.h2o(test_set[-c(11,12)])))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.nb.h2o$predict, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_06 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_06 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_06 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_06 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "h2o naive bayes model",
+                               accuracy = accuracy_06,
+                               sensitivity = sensitivity_06,
+                               specificity = specificity_06,
+                               precision = precision_06)
+
+```
+
+```{r NB_results, echo=FALSE, message=FALSE, warning=FALSE}
+
+print("Naive bayes confusion matrix")
+cm$table
+
+results %>% knitr::kable()
+
+```
+
+
+```{r h2o_shutdown, message=FALSE, warning=FALSE, include=FALSE}
+## shutdown h2o
+h2o.shutdown()
+
+```
+
+
+  
+## 3.7 Decision tree - classification tree  
+
+
+```{r DT, echo=FALSE, message=FALSE, warning=FALSE}
+# Fitting tree model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+library(tree)
+library(mlbench)
+
+set.seed(1)
+
+# We use all the variables
+f <- disease ~ Direct_Bilirubin + Alamine_Aminotransferase + Age + Alkaline_Phosphotase +
+  Gender + Total_Bilirubin + Aspartate_Aminotransferase + Total_Protiens + Albumin + Albumin_and_Globulin_Ratio
+
+tree_fit_01 <- tree(formula= f,
+                    data=train_set[-c(11)],
+                    split="deviance")
+
+# # Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.tree_01 <- predict(tree_fit_01, newdata=test_set[-c(11,12)])
+prob_pred.tree_01_class <- as.factor(colnames(prob_pred.tree_01)[max.col(prob_pred.tree_01, ties.method = c("random"))])
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.tree_01_class, reference=test_set$disease)
+
+print("Decision tree confusion matrix")
+cm$table
+
+# the tree plot generated after knitting is cluttered so this is commented out  
+plot(tree_fit_01); text(tree_fit_01, cex=0.5)
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_07 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_07 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_07 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_07 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "classification tree",
+                               accuracy = accuracy_07,
+                               sensitivity = sensitivity_07,
+                               specificity = specificity_07,
+                               precision = precision_07)
+
+results %>% knitr::kable()
+```
+
+
+  
+## 3.8 C5.0 Classification tree  
+
+
+```{r C50, echo=FALSE, message=FALSE, warning=FALSE}
+# Fitting tree model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+library(C50)
+library(mlbench)
+
+set.seed(1)
+
+# We use all the variables
+f <- disease ~ Direct_Bilirubin + Alamine_Aminotransferase + Age + Alkaline_Phosphotase +
+  Gender + Total_Bilirubin + Aspartate_Aminotransferase + Total_Protiens + Albumin + Albumin_and_Globulin_Ratio
+
+tree_fit_02 <- C5.0(formula= f,
+                    data=train_set[-c(11)])
+
+print("C5.0 Classification tree important variables:")
+C5imp(tree_fit_02)
+
+# plot(tree_fit_02); text(tree_fit_02, cex=0.01)
+
+# # Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.tree_02 <- predict(tree_fit_02, newdata=test_set[-c(11,12)], type="class")
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.tree_02, reference=test_set$disease)
+
+print("C5.0 Classification tree confusion matrix")
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_08 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_08 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_08 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_08 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "C5.0 classification tree",
+                               accuracy = accuracy_08,
+                               sensitivity = sensitivity_08,
+                               specificity = specificity_08,
+                               precision = precision_08)
+
+results %>% knitr::kable()
+```
+
+
+  
+## 3.9 Evolutionary classification tree  
+
+
+```{r Evo_Tree, echo=FALSE, message=FALSE, warning=FALSE}
+# Fitting tree model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+library(evtree)
+library(mlbench)
+
+set.seed(1)
+
+# We use all the variables
+f <- disease ~ Direct_Bilirubin + Alamine_Aminotransferase + Age + Alkaline_Phosphotase +
+  Gender + Total_Bilirubin + Aspartate_Aminotransferase + Total_Protiens + Albumin + Albumin_and_Globulin_Ratio
+
+tree_fit_03 <- evtree(formula= f,
+                      data=train_set[-c(11)],
+                      control=evtree.control(maxdepth=7))
+
+# # Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.tree_03 <- predict(tree_fit_03, newdata=test_set[-c(11,12)], type="response")
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.tree_03, reference=test_set$disease)
+
+print("Evolutionary classification tree confusion matrix")
+cm$table
+
+# plot the tree
+plot(tree_fit_03, cex=0.1)
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_09 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_09 <- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_09 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_09 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "Evolutionary classification tree",
+                               accuracy = accuracy_09,
+                               sensitivity = sensitivity_09,
+                               specificity = specificity_09,
+                               precision = precision_09)
+
+results %>% knitr::kable()
+```
+
+  
+## 3.10 Logistic model-based recursive partitioning  
+
+
+```{r LRecursivePart, echo=FALSE, message=FALSE, warning=FALSE}
+# Fitting tree model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+library(party)
+
+set.seed(1)
+
+# We use Aspartate_Aminotransferase + Total_Bilirubin + Gender + Albumin as logistic regression conditioning variables
+# Then use Direct_Bilirubin + Alamine_Aminotransferase + Age + Alkaline_Phosphotase as partitioning variables
+f <- disease ~ Aspartate_Aminotransferase + Total_Bilirubin + Gender + Albumin| Direct_Bilirubin +
+  Alamine_Aminotransferase + Age + Alkaline_Phosphotase
+
+tree_fit_04 <- mob(formula= disease ~ Aspartate_Aminotransferase + Total_Bilirubin + Gender + 
+                     Albumin | Direct_Bilirubin + Alamine_Aminotransferase + Age + 
+                     Alkaline_Phosphotase,
+                   data=train_set[-c(11)],
+                   model=glinearModel,
+                   family=binomial())
+
+# plot(tree_fit_04)
+
+# # Predicting the test set results
+# exclude y int {col 11} and factor disease {col 12}
+prob_pred.tree_04 <- predict(tree_fit_04, newdata=test_set[-c(11,12)], type="response")
+
+prob_pred.tree_04_class <- as.factor(ifelse(prob_pred.tree_04 > 0.50, "Y", "N"))
+
+# Making the Confusion Matrix
+cm <- confusionMatrix(data=prob_pred.tree_04_class, reference=test_set$disease)
+
+print("Logistic model-based recursive partitioning confusion matrix")
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_10 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_10<- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_10 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_10 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "Logistic model based recursive partitioning",
+                               accuracy = accuracy_10,
+                               sensitivity = sensitivity_10,
+                               specificity = specificity_10,
+                               precision = precision_10)
+
+results %>% knitr::kable()
+
+```
+
+
+  
+## 3.11 Principal components analysis (PCA)
+  
+
+```{r PCA, echo=FALSE, message=FALSE, warning=FALSE}
+# PCA
+
+# Fitting PCA  model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+set.seed(1)
+
+# principal component analysis
+# remove the dependent and identifier variables
+pc_01 <- train_set[1:10] %>% mutate(Gender=as.numeric(Gender)) %>% prcomp(., scale. = T)
+
+# add a training set with principal components
+train.data <- data.frame(y = train_set$y, pc_01$x)
+
+# transform test_set into PCA
+# test.data <- predict(pc, newdata = test_set)
+# test.data <- as.data.frame(test.data)
+test.data <- test_set[1:10] %>% mutate(Gender=as.numeric(Gender)) %>%
+  predict(pc_01, newdata = .) %>% as.data.frame()
+
+# run a decision tree
+# install.packages("rpart")
+library(rpart)
+rpart.model <- rpart(y ~ ., data = train.data, method = "anova")
+
+# make prediction on test data
+rpart.prediction <- predict(rpart.model, test.data) %>% as.data.frame()
+
+# convert prediction into categorical N or Y
+pred <- rpart.prediction %>%
+  mutate(class_pred = ifelse(rpart.prediction >= 1.5, "Y", "N")) %>%
+  pull(class_pred) %>% as.vector() %>% as.factor()
+
+
+cm <- confusionMatrix(data = pred, reference=test_set$disease)
+
+print("PCA confusion matrix")
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_11 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_11<- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_11 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_11 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "Principal components analysis (PCA)",
+                               accuracy = accuracy_11,
+                               sensitivity = sensitivity_11,
+                               specificity = specificity_11,
+                               precision = precision_11)
+
+results %>% knitr::kable()
+```
+  
+  
+## 3.12 Principal components analysis - singular value decomposition method (PCA-SVD)
+
+```{r pca_svd, echo=FALSE}
+# PCA-SVD
+
+set.seed(1)
+
+# using PcaMethods
+# Fitting tree model to the training set
+# dependent variable disease {col 12}
+# exclude y int {col 11}
+
+library(pcaMethods)
+# listPcaMethods()
+
+# fit on train_set
+# all numeric
+train <- train_set[1:11] %>% mutate(Gender=as.numeric(Gender))
+
+# Perform PCA on a numeric matrix
+# method = singular value decomposition (svd)
+# source: https://www.bioconductor.org/packages/release/bioc/manuals/pcaMethods/man/pcaMethods.pdf
+
+pc_02 <- pca(train,
+             method = "svd",
+             nPcs = 10,     # number of principal components to calculate.
+             scale = "uv",  
+             completeObs = FALSE,
+             center=TRUE)
+
+# x = scores = The coordinates of the individuals (observations) on the principal components.
+# summary(pc_02)
+
+# will use the first 6 PCs
+
+# x = scores = The coordinates of the individuals (observations) on the principal components
+# dim(scores(pc_02))
+# 404  10
+
+# dim(loadings(pc_02))
+# 11 10
+
+
+# predicting data using pca model (pcaMethods)
+# predict using test_set but set y = NA
+test <- test_set[1:10] %>% mutate(Gender=as.numeric(Gender),
+                                  y = NA)
+
+pc_test_02 <- predict(pc_02,
+                      newdata = test,
+                      pcs=6,    # number of PCs
+                      pre=TRUE) # pre-process newdata based on the pre-processing chosen for the PCA model
+
+# the output is a list with the following components
+#   scores - predicted scores
+#   x - predicted data
+
+# predicted scores
+# pc_test_02$scores
+# dim(pc_test_02$scores)
+# 175   6
+
+# predicted data
+# pc_test_02$x
+# dim(pc_test_02$x)
+# 175  11
+
+# the predicted dependent variable y is now populated at col 11
+# pc_test_02$x[, 11]
+
+# convert the predicted values into categorical "N" or "Y"
+# "N" if x < 1.50
+# "Y" if x >= 1.50
+# ifelse(pc_test_03$x[, 11] >= 1.5, "Y", "N")
+
+pred <- data.frame(pc_test_02$x[, 11]) %>%
+  mutate(class_pred = ifelse(pc_test_02$x[, 11] >= 1.50, "Y", "N")) %>%
+  pull(class_pred) %>% as.vector() %>% as.factor()
+
+# confusion matrix
+cm <- confusionMatrix(data = pred, reference=test_set$disease)
+
+cm$table
+
+# accuracy = (TruePositives + TrueNegatives)/SampleSize
+accuracy_12 <- cm$overall["Accuracy"][[1]]
+
+# Sensitivity = TP/(TP + FN)
+sensitivity_12<- cm$byClass["Sensitivity"][[1]]
+
+# Specificity = TN/(TN + FP)
+specificity_12 <- cm$byClass["Specificity"][[1]]
+
+# Precision = TP/(TP + FP)
+precision_12 <- cm$byClass["Precision"][[1]]
+
+# add to the results dataframe previously created
+results <- results %>% add_row(method = "PCA - singular value decomposition",
+                               accuracy = accuracy_12,
+                               sensitivity = sensitivity_12,
+                               specificity = specificity_12,
+                               precision = precision_12)
+
+results %>% knitr::kable()
+```
+  
+  
+
+  
+
+## 4. Results 
+  
+Herewith is a summary of the results and brief discussion of the performance of the models:  
+  
+  
+```{r results_summary, echo=FALSE}
+results %>% knitr::kable()
+
+```
+
+
+
+  
+    
+**h2o models**  
+
+For the first six h2o models, it is evident that naive bayes model yielded the highest specificity, or true negative rate (TNR), of 0.88. This means that out of the true 50 liver disease cases in the test_set, naive bayes model will accurately predict 44 of those as having liver disease. Unfortunately, it is not very good at predicting non-liver disease due to the model's low sensitivity value of 0.48, likewise known as the true positive rate (TPR). But then as an old addage, it is always better to err on the side of caution and predict the true non-liver disease patients as having the disease so that further examinations may be conducted; rather than to predict the true liver-disease patients as not having the disease.  At any rate, naive baye's raw prediction accuracy is at 0.59.
+
+Alternatively, random forests model performed fairly well next to naive bayes which reports specificity of 0.78.  This model has sensitivity of 0.536, with about 0.61 raw prediction accuracy. This means that out of the true 50 liver disease cases in the test_set, random forests model will predict about 39 of those as having liver disease.  
+
+
+  
+
+  
+**Classification trees and PCAs**  
+
+The remaining six models, i.e. classification trees and principal components analysis (PCA), do not seem to perform quite well in this type of dataset.  It appears that the highest specificity that could be achieved is 0.48, and this belongs to the classification tree model.  This means that out of the true 50 liver disease cases in the test_set, the classification tree model will only predict 24 of those as having liver disease. This value is even less than 50% and may not be acceptable in practice. Nevertheless, the decision trees are good at predicting non-liver disease due to sensitivities in the order of 0.90 and raw accuracies of about 0.70.
+
+
+
+
+
+
+## 5. Conclusion  
+
+
+Based of the foregoing analysis and results, it is evident that the naive bayes model could be used to accurately predict liver disease patients due to its high specificity value of 0.88.  This model was determined to be the best algorithm for this type of dataset, with a modest raw prediction accuracy of 0.59.
+
+One of the limitations in predicting liver disease given the variables in this dataset is in knowing the roles and contributions of the various chemical substances and how they interact together. For instance, although the variables Direct_Bilirubin, Alamine_Aminotransferase, Age, and Alkaline_Phosphotase were deemed important as indicated in Section 2.6, it felt inappropriate to simply remove all the other remaining variables and just focus on these four predictors during the modeling process. Perhaps future work might be to further investigate using classification trees or implement regularization algorithms for the liver disease dataset similar to the movielens dataset indicated in Section 33.9 of the Data Science book (https://rafalab.github.io/dsbook/large-datasets.html).  This is to understand how the various chemical substances contribute to the presence and absence of liver disease.  As well, if time permits, perhaps a brief consultation with a medical expert to understand the variables and validate the modeling results would be very helpful.  
+
+Nevertheless, in conclusion, the naive bayes model was found to be the best algorithm in predicting liver disease based of available variables in this dataset. 
